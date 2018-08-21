@@ -2,6 +2,7 @@
 name = "insula"
 version = "0.0.1"
 dependencies = [
+ "libc 0.2.43 (registry+https://github.com/rust-lang/crates.io-index)",
  "libkvm 0.0.1",
 ]
 

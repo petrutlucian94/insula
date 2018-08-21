@@ -5,6 +5,7 @@ authors = ["Lucian Petrut <lpetrut@cloudbasesolutions.com>"]
 
 
 [dependencies]
+libc = "*"
 libkvm = "0.0.1"
 
 [patch.crates-io]
