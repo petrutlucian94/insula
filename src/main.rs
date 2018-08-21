@@ -2,8 +2,11 @@
 //
 // Licensed under LGPL version 2 or any later version.
 
+extern crate clap;
 extern crate libc;
 extern crate libkvm;
+
+mod argparse;
 
 use libkvm::linux::kvm_bindings::*;
 use libkvm::mem::MemorySlot;
@@ -13,6 +16,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::{self, Write};
 use std::path::PathBuf;
+
+use argparse::{parse_args, get_args};
 
 const CPUID_EXT_HYPERVISOR: u32 = 1 << 31;
 
@@ -33,6 +38,7 @@ const EFER_LME: u64 = 1 << 8;
 const EFER_LMA: u64 = 1 << 10;
 
 fn main() {
+    parse_args();
     check_architecture();
 
     let kvm = KVMSystem::new().unwrap();
@@ -53,7 +59,7 @@ fn main() {
     let mem_size = 128 << 20;
     let fw_size = 2 << 20;
 
-    let mut mem = MmapMemorySlot::new(mem_size, 0, 0, 0);
+    let mem = MmapMemorySlot::new(mem_size, 0, 0, 0);
     vm.set_user_memory_region(&mem).unwrap();
     let mut bios_mem = MmapMemorySlot::new(fw_size, 0xffe00000, 1, 2);
     vm.set_user_memory_region(&bios_mem).unwrap();
@@ -287,16 +293,11 @@ fn init_regs(vcpu: &VirtualCPU) {
 }
 
 fn read_payload(mem: &mut MmapMemorySlot) {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("examples");
-    p.push("payload");
-    // p.push("payload.img");
-    p.push("coreboot.rom");
-    // p.push("bios.bin");
+    let fw_path = get_args().value_of("firmware").unwrap();
 
-    let mut f = File::open(&p).expect(&format!(
-        "Cannot find \"{}\". Run \"make\" in the same folder to build it",
-        &p.to_str().unwrap()
+    let mut f = File::open(fw_path).expect(&format!(
+        "Cannot find firmware image \"{}\".",
+        fw_path
     ));
     f.read(mem.as_slice_mut()).unwrap();
 }
