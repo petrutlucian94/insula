@@ -198,7 +198,6 @@ fn setup_cpuid(kvm: &KVMSystem, vcpu: &VirtualCPU) {
 fn setup_msrs(kvm: &KVMSystem, vcpu: &VirtualCPU) {
     let msr_list = kvm.get_msr_index_list().unwrap();
     let ignored_msrs = [0x40000020, 0x40000022, 0x40000023];
-    // let ignored_msrs = [];
 
     let msr_entries = msr_list
         .iter().filter(|i| !ignored_msrs.contains(i))
@@ -212,45 +211,8 @@ fn setup_msrs(kvm: &KVMSystem, vcpu: &VirtualCPU) {
     vcpu.set_msrs(&msr_entries).unwrap();
 }
 
-// fn get_seg(base: usize, selector: usize, flags: usize,
-//            ) {
-//     unsigned flags = rhs->flags;
-//     lhs->selector = rhs->selector;
-//     lhs->base = rhs->base;
-//     lhs->limit = rhs->limit;
-//     lhs->type = (flags >> DESC_TYPE_SHIFT) & 15;
-//     lhs->present = (flags & DESC_P_MASK) != 0;
-//     lhs->dpl = (flags >> DESC_DPL_SHIFT) & 3;
-//     lhs->db = (flags >> DESC_B_SHIFT) & 1;
-//     lhs->s = (flags & DESC_S_MASK) != 0;
-//     lhs->l = (flags >> DESC_L_SHIFT) & 1;
-//     lhs->g = (flags & DESC_G_MASK) != 0;
-//     lhs->avl = (flags & DESC_AVL_MASK) != 0;
-//     lhs->unusable = !lhs->present;
-//     lhs->padding = 0;
-// }
-
 fn init_regs(vcpu: &VirtualCPU) {
     let mut sregs = vcpu.get_kvm_sregs().unwrap();
-    // let mem_addr = mem.host_address();
-
-    // let pml4_addr: u64 = 0x2000;
-    // let pdpt_addr: u64 = 0x3000;
-    // let pd_addr: u64 = 0x4000;
-    // let pml4: u64 = mem_addr + pml4_addr;
-    // let pdpt: u64 = mem_addr + pdpt_addr;
-    // let pd: u64 = mem_addr + pd_addr;
-
-    // unsafe {
-    //     *(pml4 as *mut u64) = PDE64_PRESENT | PDE64_RW | PDE64_USER | pdpt_addr;
-    //     *(pdpt as *mut u64) = PDE64_PRESENT | PDE64_RW | PDE64_USER | pd_addr;
-    //     *(pd as *mut u64) = PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_PS;
-    // }
-
-    // sregs.cr3 = pml4_addr;
-    // sregs.cr4 = CR4_PAE;
-    // sregs.cr0 = CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
-    // sregs.efer = EFER_LME | EFER_LMA;
 
     sregs.cr0 = 0x60000010;
     let mut seg = kvm_segment {
@@ -281,9 +243,6 @@ fn init_regs(vcpu: &VirtualCPU) {
     vcpu.set_kvm_sregs(&sregs).unwrap();
 
     let mut regs = vcpu.get_kvm_regs().unwrap();
-    // regs.rflags = 2;
-    // regs.rip = 0;
-    // regs.rsp = mem.memory_size() as u64;
     regs.rdx = 0x663;  // cpuid version
     regs.rip = 0xfff0;
     
