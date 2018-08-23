@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use args::parse_args;
 use cpu::exits::VcpuExit;
 use devices::bus::Bus;
-use devices::qdbg;
+use devices::{qdbg, post_code};
 use memory::MmapMemorySlot;
 
 
@@ -53,8 +53,15 @@ fn main() {
     let qdbg_dev = qdbg::QemuDebugConsole::new();
     io_bus.insert(
         Arc::new(Mutex::new(qdbg_dev)),
-        42,
-        8,
+        0x402,
+        1,
+        false).unwrap();
+
+    let post_handler = post_code::PostCodeHandler::new();
+    io_bus.insert(
+        Arc::new(Mutex::new(post_handler)),
+        0x80,
+        1,
         false).unwrap();
 
     loop {
@@ -65,7 +72,9 @@ fn main() {
             VcpuExit::IoOut(port, data) => io_bus.write(port.into(), data),
             VcpuExit::MmioRead(addr, data) => mmio_bus.read(addr, data),
             VcpuExit::MmioWrite(addr, data) => mmio_bus.write(addr, data),
-            _ => panic!("Unsupported exit")
+            VcpuExit::Hlt => { println!("vcpu halt."); break } ,
+            VcpuExit::Shutdown => { println!("vcpu shutdown exit."); break },
+            _ => panic!("Unsupported exit.")
         };
     }
 }
