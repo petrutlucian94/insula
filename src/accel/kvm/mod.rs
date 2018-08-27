@@ -159,11 +159,6 @@ impl Accelerator for KVMAccelerator {
                 let mmio = unsafe { &mut kvm_run.__bindgen_anon_1.mmio };
                 let addr = mmio.phys_addr;
                 let len = mmio.len as usize;
-                // let data = mmio.data[0..len as u8];
-                // let data = unsafe {
-                //     std::slice::from_raw_parts(addr as *const u64, len as usize)
-                // };
-                // let data = mmio.data.chunks(len as usize);
                 let data = &mut mmio.data[..len];
                 if mmio.is_write != 0 {
                     VcpuExit::MmioWrite(addr, data)
