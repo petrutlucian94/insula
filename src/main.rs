@@ -10,6 +10,7 @@ mod accel;
 mod args;
 mod cpu;
 mod devices;
+mod ffi;
 mod firmware;
 mod memory;
 mod utils;
@@ -19,7 +20,8 @@ use std::sync::{Arc, Mutex};
 use args::parse_args;
 use cpu::exits::VcpuExit;
 use devices::bus::Bus;
-use devices::{qdbg, post_code};
+use devices::{qdbg, fw_cfg, post_code};
+use devices::fw_cfg::defs::*;
 use memory::MmapMemorySlot;
 
 
@@ -62,6 +64,17 @@ fn main() {
         Arc::new(Mutex::new(post_handler)),
         0x80,
         1,
+        false).unwrap();
+
+    let mut fw_cfg_dev = fw_cfg::FWCfgDev::new();
+    fw_cfg_dev.add_i16(FW_CFG_NB_CPUS, 1);
+    fw_cfg_dev.add_i16(FW_CFG_MAX_CPUS, 1);
+    fw_cfg_dev.add_i64(FW_CFG_RAM_SIZE, mem_size as i64);
+
+    io_bus.insert(
+        Arc::new(Mutex::new(fw_cfg_dev)),
+        0x510,
+        8,
         false).unwrap();
 
     loop {
