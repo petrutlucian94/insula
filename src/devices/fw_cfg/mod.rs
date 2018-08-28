@@ -3,7 +3,7 @@ extern crate std;
 
 pub mod defs;
 
-use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use self::byteorder::{ByteOrder, LittleEndian};
 
 use ::devices::bus::BusDevice;
 
@@ -45,6 +45,17 @@ pub struct FWCfgState {
 }
 
 impl FWCfgState {
+    pub fn new()-> Self {
+        FWCfgState {
+            file_slots: 0,
+            entries: [Vec::new(), Vec::new()],
+            files: Vec::new(),
+            cur_entry: 0,
+            cur_offset: 0,
+            dma_enabled: false
+        }
+    }
+
     fn max_entry(&self) -> usize {
         defs::FW_CFG_FILE_FIRST as usize + self.file_slots as usize
     }
@@ -104,8 +115,7 @@ impl BusDevice for FWCfgState {
         match data.len() {
             1 => println!("Ignoring fw cfg write."),
             2 => {
-                self.select(data.read_u16::<LittleEndian>().unwrap()
-                            as usize);
+                self.select(LittleEndian::read_u16(data) as usize);
                 ()
             },
             _ => println!("Invalid fw cfg write length: {}", data.len())
@@ -119,6 +129,9 @@ impl BusDevice for FWCfgState {
         let arch = FWCfgState::get_arch(self.cur_entry as usize);
         let mut value: u64 = 0;
         let mut size = data.len();
+        // TODO: clean this up, currently avoiding assigning a
+        // borred object.
+        let mut cur_offset = self.cur_offset;
 
         assert!(size > 0 && size <= 8);
 
@@ -133,9 +146,9 @@ impl BusDevice for FWCfgState {
 
                 loop {
                     value = (value << 8) |
-                        entry_data[self.cur_offset as usize] as u64;
+                        entry_data[cur_offset as usize] as u64;
 
-                    self.cur_offset += 1;
+                    cur_offset += 1;
                     size -= 1;
                     if size == 0 || self.cur_offset >= entry.len {
                         break;
@@ -147,8 +160,10 @@ impl BusDevice for FWCfgState {
             _ => (),
         }
 
+        self.cur_offset = cur_offset;
         // let data = std::slice::from_raw_parts(&data, 8);
-        data.write_u64::<LittleEndian>(value).unwrap();
+        // data.write_u64::<LittleEndian>(value).unwrap();
+        LittleEndian::write_u64(data, value);
     }
 }
 

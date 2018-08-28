@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use args::parse_args;
 use cpu::exits::VcpuExit;
 use devices::bus::Bus;
-use devices::{qdbg, post_code};
+use devices::{qdbg, fw_cfg, post_code};
 use memory::MmapMemorySlot;
 
 
@@ -62,6 +62,13 @@ fn main() {
         Arc::new(Mutex::new(post_handler)),
         0x80,
         1,
+        false).unwrap();
+
+    let fw_cfg_dev = fw_cfg::FWCfgState::new();
+    io_bus.insert(
+        Arc::new(Mutex::new(fw_cfg_dev)),
+        0x510,
+        8,
         false).unwrap();
 
     loop {

@@ -1,3 +1,4 @@
+#[allow(unused)]
 pub const FW_CFG_SIGNATURE: u32 = 0x00;
 pub const FW_CFG_ID: u32 = 0x01;
 pub const FW_CFG_UUID: u32 = 0x02;
