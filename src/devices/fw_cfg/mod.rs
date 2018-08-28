@@ -1,4 +1,11 @@
+extern crate byteorder;
+extern crate std;
+
 pub mod defs;
+
+use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
+use ::devices::bus::BusDevice;
 
 pub use self::defs::*;
 
@@ -9,16 +16,20 @@ struct FWCfgEntry {
     // TODO: callbacks
 }
 
+// Once initialized, those entries will be read-only.
+unsafe impl Send for FWCfgEntry {}
+
 struct FWCfgFile {
     size: u32,
     select: u16,
     reserved: u16,
     name: [char; FW_CFG_MAX_FILE_PATH as usize]
+    // name: String
 }
 
 struct FWCfgFiles {
     count: u32,
-    f: *const FWCfgFile  // TODO: we may need an actual array
+    f: Vec<FWCfgFile>  // TODO: we may need an actual array
 }
 
 pub struct FWCfgState {
@@ -62,7 +73,7 @@ impl FWCfgState {
         let mut ret = false;
 
         self.cur_offset = 0;
-        if ((key & FW_CFG_ENTRY_MASK as usize) >= self.max_entry()) {
+        if (key & FW_CFG_ENTRY_MASK as usize) >= self.max_entry() {
             self.cur_entry = FW_CFG_INVALID as u16;
         } else {
             self.cur_entry = key as u16;
@@ -77,4 +88,67 @@ impl FWCfgState {
 
         ret
     }
+
+    fn get_cur_entry(&self, arch: usize) -> Option<&FWCfgEntry> {
+        match self.cur_entry as u32 {
+            FW_CFG_INVALID => None,
+            _ => Some(
+                &self.entries[arch][
+                    self.cur_entry as usize & FW_CFG_ENTRY_MASK as usize])
+        }
+    }
 }
+
+impl BusDevice for FWCfgState {
+    fn write(&mut self, _offset: u64, data: &[u8]) {
+        match data.len() {
+            1 => println!("Ignoring fw cfg write."),
+            2 => {
+                self.select(data.read_u16::<LittleEndian>().unwrap()
+                            as usize);
+                ()
+            },
+            _ => println!("Invalid fw cfg write length: {}", data.len())
+        };
+    }
+
+    fn read(&mut self, _offset: u64, data: &mut [u8]) {
+        // if data.len() == 1 && offset == 0 {
+        //     data[0] = 0xe9;
+        // }
+        let arch = FWCfgState::get_arch(self.cur_entry as usize);
+        let mut value: u64 = 0;
+        let mut size = data.len();
+
+        assert!(size > 0 && size <= 8);
+
+        match self.get_cur_entry(arch) {
+            Some(entry) if entry.len >= 0 && self.cur_offset < entry.len => {
+                let entry_data = unsafe {
+                    std::slice::from_raw_parts(
+                        entry.data as *const _ as *const u8,
+                        entry.len as usize
+                    )
+                };
+
+                loop {
+                    value = (value << 8) |
+                        entry_data[self.cur_offset as usize] as u64;
+
+                    self.cur_offset += 1;
+                    size -= 1;
+                    if size == 0 || self.cur_offset >= entry.len {
+                        break;
+                    }
+                }
+                // Fill the rest of the requested bytes with zeros.
+                value <<= 8 * size;
+            },
+            _ => (),
+        }
+
+        // let data = std::slice::from_raw_parts(&data, 8);
+        data.write_u64::<LittleEndian>(value).unwrap();
+    }
+}
+

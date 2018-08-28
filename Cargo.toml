@@ -8,6 +8,7 @@ authors = ["Lucian Petrut <lpetrut@cloudbasesolutions.com>"]
 libc = "*"
 libkvm = "0.0.1"
 clap = "2.32"
+byteorder = "*"
 
 [patch.crates-io]
 libkvm = { path = "../libkvm" }
