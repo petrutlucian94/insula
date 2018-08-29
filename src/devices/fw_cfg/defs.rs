@@ -39,3 +39,5 @@ pub const FW_CFG_INVALID: u32 = 0xffff;
 pub const FW_CFG_CTL_SIZE: u32 = 0x02;
 
 pub const FW_CFG_MAX_FILE_PATH: u32 = 56;
+
+pub const FW_CFG_FILE_SLOTS_DFLT: u32 = 0x20;
