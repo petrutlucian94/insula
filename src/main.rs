@@ -10,6 +10,7 @@ mod accel;
 mod args;
 mod cpu;
 mod devices;
+mod ffi;
 mod firmware;
 mod memory;
 mod utils;
@@ -20,6 +21,7 @@ use args::parse_args;
 use cpu::exits::VcpuExit;
 use devices::bus::Bus;
 use devices::{qdbg, fw_cfg, post_code};
+use devices::fw_cfg::defs::*;
 use memory::MmapMemorySlot;
 
 
@@ -64,7 +66,11 @@ fn main() {
         1,
         false).unwrap();
 
-    let fw_cfg_dev = fw_cfg::FWCfgState::new();
+    let mut fw_cfg_dev = fw_cfg::FWCfgState::new();
+    fw_cfg_dev.add_i16(FW_CFG_NB_CPUS, 1, true);
+    fw_cfg_dev.add_i16(FW_CFG_MAX_CPUS, 1, true);
+    fw_cfg_dev.add_i64(FW_CFG_RAM_SIZE, mem_size as i64, true);
+
     io_bus.insert(
         Arc::new(Mutex::new(fw_cfg_dev)),
         0x510,

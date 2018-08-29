@@ -3,41 +3,80 @@ extern crate std;
 
 pub mod defs;
 
-use self::byteorder::{ByteOrder, LittleEndian};
+use self::byteorder::{ByteOrder, LittleEndian, BigEndian};
 
 use std::collections::HashMap;
 use std::cmp::min;
+use std::mem::size_of;
 
 use ::devices::bus::BusDevice;
 pub use self::defs::*;
+use ::ffi::*;
 
 struct FWCfgEntry {
-    len: u32,
     allow_write: bool,
-    data: *const u8,
+    data: Vec<u8>,
     // TODO: callbacks
 }
 
 // Once initialized, those entries will be read-only.
 unsafe impl Send for FWCfgEntry {}
+unsafe impl Send for FWCfgFilesWrapper {}
 
-struct FWCfgFile {
-    size: u32,
-    select: u16,
-    reserved: u16,
-    name: [char; FW_CFG_MAX_FILE_PATH as usize]
-    // name: String
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct FWCfgFile {
+    pub size: u32, // big-endian
+    pub select: u16, // big-endian
+    pub reserved: u16,
+    pub name: [::std::os::raw::c_char; FW_CFG_MAX_FILE_PATH as usize],
 }
 
-struct FWCfgFiles {
-    count: u32,
-    f: Vec<FWCfgFile>  // TODO: we may need an actual array
+#[repr(C)]
+pub struct FWCfgFiles {
+    pub count: u32, /* number of entries, in big-endian format */
+    pub f: __IncompleteArrayField<FWCfgFile>,
+}
+
+pub struct FWCfgFilesWrapper {
+    buf: Vec<u8>,
+    files: *mut FWCfgFiles,
+    slots: u32
+}
+
+impl FWCfgFilesWrapper {
+    pub fn new(slots: u32) -> Self {
+        let size = size_of::<FWCfgFiles>() +
+                   size_of::<u32>() * slots as usize;
+        let buf: Vec<u8> = vec![0; size];
+        let files: &mut FWCfgFiles = unsafe {
+            &mut *(buf.as_ptr() as *mut FWCfgFiles)
+        };
+
+        FWCfgFilesWrapper {
+            buf: buf,
+            files: files,
+            slots: slots
+        }
+    }
+
+    pub fn to_files_vec(&self) -> Vec<FWCfgFile> {
+        unsafe {
+            (*self.files)
+                .f
+                .as_slice(self.slots as usize)
+        }.to_vec()
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut FWCfgFiles {
+        self.buf.as_mut_ptr() as *mut FWCfgFiles
+    }
 }
 
 pub struct FWCfgState {
     file_slots: u16,
     entries: [HashMap<u32, FWCfgEntry>; 2],
-    files: Vec<FWCfgFiles>,
+    files_wrapper: FWCfgFilesWrapper,
     cur_entry: u16,
     cur_offset: u32,
     dma_enabled: bool,
@@ -49,32 +88,33 @@ pub struct FWCfgState {
 impl FWCfgState {
     pub fn new()-> Self {
         let mut obj = FWCfgState {
-            file_slots: 0,
+            file_slots: FW_CFG_FILE_SLOTS_DFLT as u16,
             entries: [HashMap::new(), HashMap::new()],
-            files: Vec::new(),
+            files_wrapper: FWCfgFilesWrapper::new(FW_CFG_FILE_SLOTS_DFLT),
             cur_entry: 0,
             cur_offset: 0,
             dma_enabled: false
         };
 
-        obj.add_bytes(defs::FW_CFG_SIGNATURE, b"QEMU", 4, true);
+        obj.add_bytes(FW_CFG_SIGNATURE, b"QEMU", 4, true);
+        obj.add_file("test", &[1; 5], 5);
 
         obj
     }
 
     fn max_entry(&self) -> usize {
         // todo: I think this may be removed.
-        defs::FW_CFG_FILE_FIRST as usize + self.file_slots as usize
+        FW_CFG_FILE_FIRST as usize + self.file_slots as usize
     }
 
     fn get_arch(key: usize) -> usize {
-        ((key as u32 & defs::FW_CFG_ARCH_LOCAL) != 0) as usize
+        ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
+    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
-        let key = key & defs::FW_CFG_ENTRY_MASK;
+        let key = key & FW_CFG_ENTRY_MASK;
 
         assert!((key as usize) < self.max_entry());
         // assert!(self.entries[arch][key].data == NULL); /* avoid key conflict */
@@ -82,11 +122,15 @@ impl FWCfgState {
         let mut entry = match self.entries[arch].get_mut(&key) {
             Some(ref existing_entry) => panic!("fw cfg key already exists: {}",
                                                key),
-            _ => FWCfgEntry {
-                    len: len,
-                    data: data.as_ptr(),
+            _ => {
+                let mut data_vec = Vec::new();
+                data_vec.extend_from_slice(&data[..len as usize]);
+
+                FWCfgEntry {
+                    data: data_vec,
                     allow_write: !read_only
                 }
+            }
         };
 
         self.entries[arch].insert(key, entry);
@@ -96,6 +140,33 @@ impl FWCfgState {
         // // self.entries[arch][key].write_cb = write_cb;
         // // self.entries[arch][key].callback_opaque = callback_opaque;
         // self.entries[arch][&key].allow_write = !read_only;
+    }
+
+    pub fn add_i16(&mut self, key: u32, data: i16, read_only: bool) {
+        let mut buf = [0; size_of::<i16>()];
+        LittleEndian::write_i16(&mut buf, data);
+        self.add_bytes(key, &buf, size_of::<i16>() as u32, read_only);
+    }
+
+    pub fn add_i64(&mut self, key: u32, data: i64, read_only: bool) {
+        let mut buf = [0; size_of::<i64>()];
+        LittleEndian::write_i64(&mut buf, data);
+        self.add_bytes(key, &buf, size_of::<i64>() as u32, read_only);
+    }
+
+    pub fn add_file(&mut self, filename: &str, data: &[u8], len: u32) {
+        // qemu sorts the files by filename, we can probably skip this.
+
+        let fw_cfg_files = self.files_wrapper.files;
+        let count = unsafe { u32::from_be((*fw_cfg_files).count) };
+        let files_vec = self.files_wrapper.to_files_vec();
+        let mut file_entry = files_vec[count as usize];
+
+        file_entry.size = len.to_be();
+        file_entry.select = ((FW_CFG_FILE_FIRST + count) as u16).to_be();
+
+        self.add_bytes(FW_CFG_FILE_FIRST + count, data, len, true);
+        unsafe { (*fw_cfg_files).count = (count + 1).to_be() };
     }
 
     fn select(&mut self, key: usize) -> bool {
@@ -150,20 +221,15 @@ impl BusDevice for FWCfgState {
         assert!(read_len <= 8);
 
         match self.get_cur_entry(arch) {
-            Some(entry) if entry.len >= 0 && self.cur_offset < entry.len => {
-                let entry_data = unsafe {
-                    std::slice::from_raw_parts(
-                        entry.data as *const _ as *const u8,
-                        entry.len as usize
-                    )
-                };
-
+            Some(entry) if entry.data.len() >= 0 &&
+                        self.cur_offset < entry.data.len() as u32 => {
                 // Fill the buffer with data from the config entry,
                 // starting with the current offset.
+                let entry_len = entry.data.len() as u32;
                 let entry_read_len = min(
-                    read_len, (entry.len - self.cur_offset) as usize);
+                    read_len, (entry_len - self.cur_offset) as usize);
                 data[..entry_read_len].clone_from_slice(
-                    &entry_data[cur_offset..cur_offset + read_len as usize]);
+                    &entry.data[cur_offset..cur_offset + read_len as usize]);
                 if entry_read_len < read_len {
                     // Fill the rest with zeros.
                     for e in &mut data[read_len..read_len] {
