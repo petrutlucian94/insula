@@ -13,15 +13,15 @@ use ::devices::bus::BusDevice;
 pub use self::defs::*;
 use ::ffi::*;
 
-struct FWCfgEntry {
+struct FWCfgEntry<'a> {
     len: u32,
     allow_write: bool,
-    data: *const u8,
+    data: &'a [u8],
     // TODO: callbacks
 }
 
 // Once initialized, those entries will be read-only.
-unsafe impl Send for FWCfgEntry {}
+unsafe impl<'a> Send for FWCfgEntry<'a> {}
 unsafe impl Send for FWCfgFilesWrapper {}
 
 #[repr(C)]
@@ -42,7 +42,7 @@ pub struct FWCfgFiles {
 pub struct FWCfgFilesWrapper {
     buf: Vec<u8>,
     files: *mut FWCfgFiles,
-    slots: u32
+    slots: u32,
 }
 
 impl FWCfgFilesWrapper {
@@ -57,7 +57,7 @@ impl FWCfgFilesWrapper {
         FWCfgFilesWrapper {
             buf: buf,
             files: files,
-            slots: slots
+            slots: slots,
         }
     }
 
@@ -74,9 +74,9 @@ impl FWCfgFilesWrapper {
     }
 }
 
-pub struct FWCfgState {
+pub struct FWCfgState<'a> {
     file_slots: u16,
-    entries: [HashMap<u32, FWCfgEntry>; 2],
+    entries: [HashMap<u32, FWCfgEntry<'a>>; 2],
     files_wrapper: FWCfgFilesWrapper,
     cur_entry: u16,
     cur_offset: u32,
@@ -86,9 +86,9 @@ pub struct FWCfgState {
     // MemoryRegion dma_iomem;
 }
 
-impl FWCfgState {
+impl<'a> FWCfgState<'a> {
     pub fn new()-> Self {
-        let mut obj = FWCfgState {
+        let obj = FWCfgState {
             file_slots: FW_CFG_FILE_SLOTS_DFLT as u16,
             entries: [HashMap::new(), HashMap::new()],
             files_wrapper: FWCfgFilesWrapper::new(FW_CFG_FILE_SLOTS_DFLT),
@@ -97,13 +97,18 @@ impl FWCfgState {
             dma_enabled: false
         };
 
-        obj.add_bytes(FW_CFG_SIGNATURE, b"QEMU", 4, true);
-        obj.add_bytes(FW_CFG_FILE_DIR,
-                      &obj.files_wrapper.buf,
-                      obj.files_wrapper.buf.len() as u32, true);
-        obj.add_file("test", &[1; 5], 5);
+        obj.add_default_entries()
+    }
 
-        obj
+    fn add_default_entries(mut self) -> Self {
+        let f_buf_sz = self.files_wrapper.buf.len();
+
+        self.add_bytes(FW_CFG_SIGNATURE, b"QEMU", 4, true);
+        self.add_bytes(FW_CFG_FILE_DIR,
+                       self.files_wrapper.buf.as_slice(),
+                       f_buf_sz as u32, true);
+        self.add_file("test", &[1; 5], 5);
+        self
     }
 
     fn max_entry(&self) -> usize {
@@ -115,7 +120,7 @@ impl FWCfgState {
         ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
+    pub fn add_bytes(&mut self, key: u32, data: &'a [u8], len: u32, read_only: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
         let key = key & FW_CFG_ENTRY_MASK;
@@ -129,7 +134,7 @@ impl FWCfgState {
             _ => {
                 FWCfgEntry {
                     len: len,
-                    data: data.as_ptr(),
+                    data: data,
                     allow_write: !read_only
                 }
             }
@@ -145,18 +150,18 @@ impl FWCfgState {
     }
 
     pub fn add_i16(&mut self, key: u32, data: i16, read_only: bool) {
-        let mut buf = [0; size_of::<i16>()];
-        LittleEndian::write_i16(&mut buf, data);
-        self.add_bytes(key, &buf, size_of::<i16>() as u32, read_only);
+        // let mut buf = [0; size_of::<i16>()];
+        // LittleEndian::write_i16(&mut buf, data);
+        // self.add_bytes(key, &buf, size_of::<i16>() as u32, read_only);
     }
 
     pub fn add_i64(&mut self, key: u32, data: i64, read_only: bool) {
-        let mut buf = [0; size_of::<i64>()];
-        LittleEndian::write_i64(&mut buf, data);
-        self.add_bytes(key, &buf, size_of::<i64>() as u32, read_only);
+        // let mut buf = [0; size_of::<i64>()];
+        // LittleEndian::write_i64(&mut buf, data);
+        // self.add_bytes(key, &buf, size_of::<i64>() as u32, read_only);
     }
 
-    pub fn add_file(&mut self, filename: &str, data: &[u8], len: u32) {
+    pub fn add_file(&mut self, filename: &str, data: &'a [u8], len: u32) {
         // qemu sorts the files by filename, we can probably skip this.
 
         let fw_cfg_files = self.files_wrapper.files;
@@ -203,7 +208,7 @@ impl FWCfgState {
     }
 }
 
-impl BusDevice for FWCfgState {
+impl<'a> BusDevice for FWCfgState<'a> {
     fn write(&mut self, _offset: u64, data: &[u8]) {
         match data.len() {
             1 => println!("Ignoring fw cfg write."),
