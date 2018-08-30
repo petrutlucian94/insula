@@ -3,7 +3,7 @@ extern crate std;
 
 pub mod defs;
 
-use self::byteorder::{ByteOrder, LittleEndian, BigEndian};
+use self::byteorder::{ByteOrder, LittleEndian};
 
 use std::collections::HashMap;
 use std::cmp::min;
@@ -29,7 +29,7 @@ pub struct FWCfgFile {
     pub size: u32, // big-endian
     pub select: u16, // big-endian
     pub reserved: u16,
-    pub name: [::std::os::raw::c_char; FW_CFG_MAX_FILE_PATH as usize],
+    pub name: [std::os::raw::c_uchar; FW_CFG_MAX_FILE_PATH as usize],
 }
 
 #[repr(C)]
@@ -42,6 +42,11 @@ pub struct FWCfgFilesWrapper {
     buf: Vec<u8>,
     files: *mut FWCfgFiles,
     slots: u32
+}
+
+enum EntryData<'a> {
+    ByteSlice(&'a [u8]),
+    ByteVector(Vec<u8>)
 }
 
 impl FWCfgFilesWrapper {
@@ -97,6 +102,9 @@ impl FWCfgState {
         };
 
         obj.add_bytes(FW_CFG_SIGNATURE, b"QEMU", 4, true);
+        obj.add_bytes(FW_CFG_FILE_DIR,
+                      &obj.files_wrapper.buf,
+                      obj.files_wrapper.buf.len() as u32, true);
         obj.add_file("test", &[1; 5], 5);
 
         obj
@@ -111,7 +119,19 @@ impl FWCfgState {
         ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
+    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32,
+                     read_only: bool) {
+        self.add_bytes_internal(key, EntryData::ByteSlice(data),
+                                len, read_only);
+    }
+
+    pub fn add_bytes_vec(&mut self, key: u32, data: Vec<u8>, len: u32,
+                         read_only: bool) {
+        self.add_bytes_internal(key, EntryData::ByteVector(data),
+                                len, read_only);
+    }
+
+    pub fn add_bytes_internal(&mut self, key: u32, data: EntryData, len: u32, read_only: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
         let key = key & FW_CFG_ENTRY_MASK;
@@ -119,12 +139,18 @@ impl FWCfgState {
         assert!((key as usize) < self.max_entry());
         // assert!(self.entries[arch][key].data == NULL); /* avoid key conflict */
 
-        let mut entry = match self.entries[arch].get_mut(&key) {
+        let entry = match self.entries[arch].get(&key) {
             Some(ref existing_entry) => panic!("fw cfg key already exists: {}",
                                                key),
             _ => {
-                let mut data_vec = Vec::new();
-                data_vec.extend_from_slice(&data[..len as usize]);
+                let mut data_vec: Vec<u8> = match data {
+                    EntryData::ByteSlice(data) => {
+                        let mut vec = Vec::new();
+                        vec.extend_from_slice(&data[..len as usize]);
+                        vec
+                    },
+                    EntryData::ByteVector(data) => { data }
+                };
 
                 FWCfgEntry {
                     data: data_vec,
@@ -162,6 +188,9 @@ impl FWCfgState {
         let files_vec = self.files_wrapper.to_files_vec();
         let mut file_entry = files_vec[count as usize];
 
+        let cstr_fname = std::ffi::CString::new(filename).unwrap();
+        file_entry.name[0..filename.len()].copy_from_slice(
+            cstr_fname.to_bytes_with_nul());
         file_entry.size = len.to_be();
         file_entry.select = ((FW_CFG_FILE_FIRST + count) as u16).to_be();
 
@@ -212,17 +241,18 @@ impl BusDevice for FWCfgState {
 
     fn read(&mut self, _offset: u64, data: &mut [u8]) {
         let arch = FWCfgState::get_arch(self.cur_entry as usize);
-        let mut value: u64 = 0;
-        let mut read_len = data.len();
+        let read_len = data.len();
         // TODO: clean this up, currently avoiding assigning a
         // borrowed object.
-        let mut cur_offset = self.cur_offset as usize;
+        let cur_offset = self.cur_offset as usize;
 
         assert!(read_len <= 8);
 
         match self.get_cur_entry(arch) {
             Some(entry) if entry.data.len() >= 0 &&
                         self.cur_offset < entry.data.len() as u32 => {
+                println!("read: {:x} - {:x} -> {:x?}",
+                         self.cur_entry, cur_offset, entry.data);
                 // Fill the buffer with data from the config entry,
                 // starting with the current offset.
                 let entry_len = entry.data.len() as u32;
@@ -237,7 +267,8 @@ impl BusDevice for FWCfgState {
                     }
                 }
             },
-            _ => (),
+            _ => println!("No entry: {:x} - {:x}",
+                          self.cur_entry, cur_offset),
         }
 
         self.cur_offset = cur_offset as u32;
