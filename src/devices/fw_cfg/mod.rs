@@ -14,8 +14,9 @@ pub use self::defs::*;
 use ::ffi::*;
 
 struct FWCfgEntry {
+    len: u32,
     allow_write: bool,
-    data: Vec<u8>,
+    data: *const u8,
     // TODO: callbacks
 }
 
@@ -42,11 +43,6 @@ pub struct FWCfgFilesWrapper {
     buf: Vec<u8>,
     files: *mut FWCfgFiles,
     slots: u32
-}
-
-enum EntryData<'a> {
-    ByteSlice(&'a [u8]),
-    ByteVector(Vec<u8>)
 }
 
 impl FWCfgFilesWrapper {
@@ -119,19 +115,7 @@ impl FWCfgState {
         ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32,
-                     read_only: bool) {
-        self.add_bytes_internal(key, EntryData::ByteSlice(data),
-                                len, read_only);
-    }
-
-    pub fn add_bytes_vec(&mut self, key: u32, data: Vec<u8>, len: u32,
-                         read_only: bool) {
-        self.add_bytes_internal(key, EntryData::ByteVector(data),
-                                len, read_only);
-    }
-
-    pub fn add_bytes_internal(&mut self, key: u32, data: EntryData, len: u32, read_only: bool) {
+    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
         let key = key & FW_CFG_ENTRY_MASK;
@@ -143,17 +127,9 @@ impl FWCfgState {
             Some(ref existing_entry) => panic!("fw cfg key already exists: {}",
                                                key),
             _ => {
-                let mut data_vec: Vec<u8> = match data {
-                    EntryData::ByteSlice(data) => {
-                        let mut vec = Vec::new();
-                        vec.extend_from_slice(&data[..len as usize]);
-                        vec
-                    },
-                    EntryData::ByteVector(data) => { data }
-                };
-
                 FWCfgEntry {
-                    data: data_vec,
+                    len: len,
+                    data: data.as_ptr(),
                     allow_write: !read_only
                 }
             }
@@ -249,17 +225,22 @@ impl BusDevice for FWCfgState {
         assert!(read_len <= 8);
 
         match self.get_cur_entry(arch) {
-            Some(entry) if entry.data.len() >= 0 &&
-                        self.cur_offset < entry.data.len() as u32 => {
+            Some(entry) if entry.len >= 0 && self.cur_offset < entry.len => {
+                let entry_data = unsafe {
+                    std::slice::from_raw_parts(
+                        entry.data as *const _ as *const u8,
+                        entry.len as usize
+                    )
+                };
+
                 println!("read: {:x} - {:x} -> {:x?}",
                          self.cur_entry, cur_offset, entry.data);
                 // Fill the buffer with data from the config entry,
                 // starting with the current offset.
-                let entry_len = entry.data.len() as u32;
                 let entry_read_len = min(
-                    read_len, (entry_len - self.cur_offset) as usize);
+                    read_len, (entry.len - self.cur_offset) as usize);
                 data[..entry_read_len].clone_from_slice(
-                    &entry.data[cur_offset..cur_offset + read_len as usize]);
+                    &entry_data[cur_offset..cur_offset + read_len as usize]);
                 if entry_read_len < read_len {
                     // Fill the rest with zeros.
                     for e in &mut data[read_len..read_len] {
