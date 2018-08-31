@@ -52,12 +52,12 @@ fn main() {
     let mut io_bus = Bus::new();
     let mut mmio_bus = Bus::new();
 
-    // let qdbg_dev = qdbg::QemuDebugConsole::new();
-    // io_bus.insert(
-    //     Arc::new(Mutex::new(qdbg_dev)),
-    //     0x402,
-    //     1,
-    //     false).unwrap();
+    let qdbg_dev = qdbg::QemuDebugConsole::new();
+    io_bus.insert(
+        Arc::new(Mutex::new(qdbg_dev)),
+        0x402,
+        1,
+        false).unwrap();
 
     let post_handler = post_code::PostCodeHandler::new();
     io_bus.insert(

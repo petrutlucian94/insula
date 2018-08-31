@@ -16,7 +16,8 @@ use ::ffi::*;
 struct FWCfgEntry {
     len: u32,
     allow_write: bool,
-    data: Vec<u8>,
+    buf: Vec<u8>,
+    data: *const u8,
     // TODO: callbacks
 }
 
@@ -110,9 +111,10 @@ impl FWCfgState {
         };
 
         self.add_bytes(FW_CFG_SIGNATURE, b"QEMU", 4, true);
-        self.add_bytes(FW_CFG_FILE_DIR,
-                       f_buf_slice,
-                       f_buf_sz as u32, true);
+        self.add_bytes_no_copy(
+            FW_CFG_FILE_DIR,
+            f_buf_slice,
+            f_buf_sz as u32, true);
         self.add_file("test", &[1; 5], 5);
         self
     }
@@ -126,7 +128,18 @@ impl FWCfgState {
         ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32, read_only: bool) {
+    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32,
+                     read_only: bool){
+        self.add_bytes_internal(key, data, len, read_only, true);
+    }
+
+    pub fn add_bytes_no_copy(&mut self, key: u32, data: &[u8], len: u32,
+                             read_only: bool) {
+        self.add_bytes_internal(key, data, len, read_only, false);
+    }
+
+    fn add_bytes_internal(&mut self, key: u32, data: &[u8], len: u32,
+                          read_only: bool, copy_slice: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
         let key = key & FW_CFG_ENTRY_MASK;
@@ -139,11 +152,18 @@ impl FWCfgState {
                                                key),
             _ => {
                 let mut vec = Vec::new();
-                vec.extend_from_slice(&data[..len as usize]);
+                let data_ptr = if copy_slice {
+                    vec.extend_from_slice(&data[..len as usize]);
+                    vec.as_ptr()
+                } else {
+                    data.as_ptr()
+                };
+
 
                 FWCfgEntry {
                     len: len,
-                    data: vec,
+                    data: data_ptr,
+                    buf: vec,
                     allow_write: !read_only
                 }
             }
@@ -175,15 +195,15 @@ impl FWCfgState {
 
         let fw_cfg_files = self.files_wrapper.files;
         let count = unsafe { u32::from_be((*fw_cfg_files).count) };
-        let files_slice = unsafe {
-            (*self.files_wrapper.files).f.as_slice(
+        let files_slice: &mut [FWCfgFile] = unsafe {
+            (*self.files_wrapper.files).f.as_mut_slice(
                 self.files_wrapper.slots as usize)
         };
-        let mut file_entry= files_slice[count as usize];
+        let file_entry = &mut files_slice[count as usize];
 
         let cstr_fname = std::ffi::CString::new(filename).unwrap();
         file_entry.name[0..filename.len()].copy_from_slice(
-            cstr_fname.to_bytes_with_nul());
+            cstr_fname.to_bytes());
         file_entry.size = len.to_be();
         file_entry.select = ((FW_CFG_FILE_FIRST + count) as u16).to_be();
 
@@ -239,19 +259,23 @@ impl BusDevice for FWCfgState {
         // borrowed object.
         let cur_offset = self.cur_offset as usize;
 
-        assert!(read_len <= 8);
-
+        println!("Read: {}.", read_len);
         match self.get_cur_entry(arch) {
-            Some(entry) if self.cur_offset < entry.data.len() as u32 => {
-                let entry_len = entry.data.len() as u32;
-                println!("read: {:x} - {:x} -> {:x?}",
-                         self.cur_entry, cur_offset, entry.data);
+            Some(entry) if self.cur_offset < entry.len as u32 => {
+                let entry_data = unsafe {
+                    std::slice::from_raw_parts(
+                        entry.data as *const _ as *const u8,
+                        entry.len as usize
+                    )
+                };
+                println!("read: {:x} - {:x} -> {:x?} {}",
+                         self.cur_entry, cur_offset, entry.data, entry.len);
                 // Fill the buffer with data from the config entry,
                 // starting with the current offset.
                 let entry_read_len = min(
-                    read_len, (entry_len - self.cur_offset) as usize);
+                    read_len, (entry.len - self.cur_offset) as usize);
                 data[..entry_read_len].clone_from_slice(
-                    &entry.data[cur_offset..cur_offset + read_len as usize]);
+                    &entry_data[cur_offset..cur_offset + read_len as usize]);
                 if entry_read_len < read_len {
                     // Fill the rest with zeros.
                     for e in &mut data[read_len..read_len] {
