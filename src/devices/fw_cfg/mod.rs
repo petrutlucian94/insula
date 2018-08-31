@@ -16,9 +16,11 @@ use ::ffi::*;
 struct FWCfgEntry {
     len: u32,
     allow_write: bool,
+    // TODO: refactort this to use Rc. The issue is that the cfg
+    // entry references may point to owned by someone else
+    // (e.g. the FwCfgFiles field).
     buf: Vec<u8>,
     data: *const u8,
-    // TODO: callbacks
 }
 
 // Once initialized, those entries will be read-only.
@@ -81,10 +83,6 @@ pub struct FWCfgState {
     files_wrapper: FWCfgFilesWrapper,
     cur_entry: u16,
     cur_offset: u32,
-    dma_enabled: bool,
-    // dma_addr_t dma_addr;
-    // AddressSpace *dma_as;
-    // MemoryRegion dma_iomem;
 }
 
 impl FWCfgState {
@@ -95,7 +93,6 @@ impl FWCfgState {
             files_wrapper: FWCfgFilesWrapper::new(FW_CFG_FILE_SLOTS_DFLT),
             cur_entry: 0,
             cur_offset: 0,
-            dma_enabled: false
         };
 
         obj.add_default_entries()
@@ -120,7 +117,6 @@ impl FWCfgState {
     }
 
     fn max_entry(&self) -> usize {
-        // todo: I think this may be removed.
         FW_CFG_FILE_FIRST as usize + self.file_slots as usize
     }
 
@@ -128,24 +124,20 @@ impl FWCfgState {
         ((key as u32 & FW_CFG_ARCH_LOCAL) != 0) as usize
     }
 
-    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32,
-                     read_only: bool){
+    pub fn add_bytes(&mut self, key: u32, data: &[u8], len: u32){
         self.add_bytes_internal(key, data, len, read_only, true);
     }
 
-    pub fn add_bytes_no_copy(&mut self, key: u32, data: &[u8], len: u32,
-                             read_only: bool) {
+    pub fn add_bytes_no_copy(&mut self, key: u32, data: &[u8], len: u32) {
         self.add_bytes_internal(key, data, len, read_only, false);
     }
 
     fn add_bytes_internal(&mut self, key: u32, data: &[u8], len: u32,
-                          read_only: bool, copy_slice: bool) {
+                          copy_slice: bool) {
         let arch = FWCfgState::get_arch(key as usize);
 
         let key = key & FW_CFG_ENTRY_MASK;
-
         assert!((key as usize) < self.max_entry());
-        // assert!(self.entries[arch][key].data == NULL); /* avoid key conflict */
 
         let entry = match self.entries[arch].get(&key) {
             Some(ref existing_entry) => panic!("fw cfg key already exists: {}",
@@ -170,12 +162,6 @@ impl FWCfgState {
         };
 
         self.entries[arch].insert(key, entry);
-        // self.entries[arch][&key].data = data.as_ptr();
-        // self.entries[arch][&key].len = len;
-        // // self.entries[arch][key].select_cb = select_cb;
-        // // self.entries[arch][key].write_cb = write_cb;
-        // // self.entries[arch][key].callback_opaque = callback_opaque;
-        // self.entries[arch][&key].allow_write = !read_only;
     }
 
     pub fn add_i16(&mut self, key: u32, data: i16, read_only: bool) {
@@ -220,12 +206,6 @@ impl FWCfgState {
         } else {
             self.cur_entry = key as u16;
             ret = true;
-            /* entry successfully selected, now run callback if present */
-            // arch = FWCfgState::get_arch(key);
-            // e = s->entries[arch][key & FW_CFG_ENTRY_MASK];
-            // if (e->select_cb) {
-            //     e->select_cb(e->callback_opaque);
-            // }
         }
 
         ret
