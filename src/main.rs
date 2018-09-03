@@ -22,6 +22,7 @@ use cpu::exits::VcpuExit;
 use devices::bus::Bus;
 use devices::{qdbg, fw_cfg, post_code};
 use devices::fw_cfg::defs::*;
+use devices::fw_cfg::e820;
 use memory::MmapMemorySlot;
 
 
@@ -66,10 +67,17 @@ fn main() {
         1,
         false).unwrap();
 
+    let mut e820_table = e820::E820Table::new();
+    // TODO: take into account reserved regions, if any.
+    e820_table.add_entry(0, mem_size as u64, e820::E820_RAM);
+    let e820_table_buf = e820_table.to_slice();
+
     let mut fw_cfg_dev = fw_cfg::FWCfgDev::new();
     fw_cfg_dev.add_i16(FW_CFG_NB_CPUS, 1);
     fw_cfg_dev.add_i16(FW_CFG_MAX_CPUS, 1);
     fw_cfg_dev.add_i64(FW_CFG_RAM_SIZE, mem_size as i64);
+    fw_cfg_dev.add_file("etc/e820", e820_table_buf,
+                        e820_table_buf.len() as u32);
 
     io_bus.insert(
         Arc::new(Mutex::new(fw_cfg_dev)),

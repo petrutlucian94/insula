@@ -2,6 +2,7 @@ extern crate byteorder;
 extern crate std;
 
 pub mod defs;
+pub mod e820;
 
 use self::byteorder::{ByteOrder, LittleEndian};
 
@@ -113,7 +114,6 @@ impl FWCfgDev {
             FW_CFG_FILE_DIR,
             f_buf_slice,
             f_buf_sz as u32);
-        self.add_file("test", &[1; 5], 5);
         self
     }
 
